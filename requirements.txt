@@ -1,6 +1,9 @@
-streamlit
+streamlit>=1.40
 numpy
 pandas
-scipy
+plotly
+requests
 gspread
 google-auth
+reportlab
+python-docx
