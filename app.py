@@ -50,7 +50,15 @@ input, textarea, .stSelectbox div, .stNumberInput input {color:#17365D !importan
 .stTabs [data-baseweb="tab-list"] {gap:6px;}
 .stTabs [data-baseweb="tab"] {color:#17365D !important; font-weight:600; background:#EAF2FA; border-radius:8px 8px 0 0; padding:8px 16px;}
 .stTabs [aria-selected="true"] {background:#2F75B5 !important; color:#FFFFFF !important;}
-.small-muted {color:#64748B; font-size:.9rem;}
+ .small-muted {color:#64748B; font-size:.9rem;}
+.welcome-hero {padding:2rem 2.2rem; border-radius:18px; background:linear-gradient(120deg,#102A43 0%,#174A72 100%); border-bottom:5px solid #D6A84F; margin:1.2rem 0 2rem; box-shadow:0 10px 26px rgba(16,42,67,.13);}
+.welcome-hero .welcome-kicker {color:#F4D58D !important; font-size:.78rem; font-weight:800; letter-spacing:3px; margin-bottom:.8rem;}
+.welcome-hero h1, .welcome-hero h1 * {color:#FFFFFF !important; -webkit-text-fill-color:#FFFFFF !important; font-size:2.25rem; line-height:1.2; margin:0 0 .8rem 0; text-shadow:0 1px 2px rgba(0,0,0,.18) !important; opacity:1 !important;}
+.welcome-hero p {color:#F4F8FC !important; font-size:1.03rem; line-height:1.7; max-width:850px; margin:0;}
+.welcome-card {background:#FFFFFF; border:1px solid #D8E3EE; border-top:4px solid #2F75B5; border-radius:16px; padding:1.35rem 1.45rem 1.1rem; box-shadow:0 8px 24px rgba(23,54,93,.08);}
+.welcome-card h3 {color:#17365D !important; margin-top:.2rem;}
+.welcome-card p, .welcome-card label {color:#334155 !important;}
+.welcome-card [data-testid="stForm"] {border:0; padding:0;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -342,91 +350,47 @@ def meteo_actuelle(lat: float, lon: float):
         return None
 
 # -----------------------------------------------------------------------------
-# État de session et accès facultatif
-# -----------------------------------------------------------------------------
-try:
-    password_expected = st.secrets.get("app_password", None)
-except Exception:
-    password_expected = None
-if password_expected:
-    if not st.session_state.get("access_ok", False):
-        st.title("🔒 Accès protégé")
-        password = st.text_input("Mot de passe", type="password")
-        if st.button("Se connecter"):
-            if password == password_expected:
-                st.session_state.access_ok = True
-                st.rerun()
-            else:
-                st.error("Mot de passe incorrect.")
-        st.stop()
-
-# -----------------------------------------------------------------------------
-# Page d'accueil : connexion / inscription par utilisateur
+# Accueil : écran épuré, saisie du pseudo et identité visuelle contrastée
 # -----------------------------------------------------------------------------
 if not st.session_state.get("current_user"):
     st.markdown(
         """
-        <div style="
-            background: linear-gradient(135deg, #2F75B5 0%, #17365D 100%);
-            border: 2px solid #17365D;
-            border-radius: 14px;
-            padding: 28px 32px;
-            margin-bottom: 22px;
-            box-shadow: 0 4px 14px rgba(23,54,93,0.25);
-        ">
-            <h1 style="color:#FFFFFF; margin:0 0 10px 0;">👋 Bienvenue sur SHM Road</h1>
-            <p style="color:#EAF2FA; font-size:16px; margin:0;">
-                <strong>SHM Road</strong> est une application pédagogique d'étude préliminaire de chaussées :
-                elle permet d'estimer un trafic cumulé, de caractériser un sol, de proposer une structure
-                de chaussée indicative, puis d'enregistrer et d'analyser statistiquement vos études dans le cloud.
-                Connectez-vous ou créez un compte pour commencer.
-            </p>
+        <div class="welcome-hero">
+          <div class="welcome-kicker">SHM · GÉNIE CIVIL</div>
+          <h1 style="color:#FFFFFF !important;-webkit-text-fill-color:#FFFFFF !important;opacity:1 !important;text-shadow:0 1px 2px rgba(0,0,0,.18);">Bienvenue sur SHM Road</h1>
+          <p>
+            Votre espace de travail pour les études préliminaires de chaussées :
+            analyse du trafic, caractérisation du sol, visualisation de la structure
+            et préparation de rapports de métré.
+          </p>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    users_sheet, users_error = get_users_sheet()
-    onglet_connexion, onglet_inscription = st.tabs(["🔑 Se connecter", "📝 Créer un compte"])
 
-    with onglet_connexion:
-        nom_c = st.text_input("Nom d'utilisateur", key="login_nom")
-        mdp_c = st.text_input("Mot de passe", type="password", key="login_mdp")
-        if st.button("Se connecter", type="primary", key="btn_login"):
-            if users_sheet is None:
-                st.error(users_error or "Connexion cloud indisponible.")
-            elif not nom_c or not mdp_c:
-                st.warning("Merci de renseigner un nom et un mot de passe.")
+    # Une seule carte d'accès : le panneau de présentation à gauche a été supprimé.
+    _, col_form, _ = st.columns([0.65, 1.7, 0.65], gap="large")
+    with col_form:
+        st.markdown('<div class="welcome-card">', unsafe_allow_html=True)
+        st.markdown("### Accéder à votre espace")
+        st.markdown("Saisissez votre pseudo pour personnaliser votre session.")
+        with st.form("pseudo_form", clear_on_submit=False):
+            pseudo = st.text_input(
+                "Votre pseudo",
+                placeholder="Ex. : Shamma, Ivan, Étudiant GC…",
+                max_chars=40,
+            )
+            continuer = st.form_submit_button(
+                "Continuer vers SHM Road", type="primary", use_container_width=True
+            )
+        st.markdown('</div>', unsafe_allow_html=True)
+        if continuer:
+            pseudo_nettoye = " ".join(pseudo.strip().split())
+            if not pseudo_nettoye:
+                st.warning("Veuillez saisir un pseudo pour continuer.")
             else:
-                try:
-                    enregistrements = users_sheet.get_all_records()
-                    correspondance = next((u for u in enregistrements if u.get("Nom") == nom_c), None)
-                    if correspondance and correspondance.get("MotDePasseHash") == hash_mdp(mdp_c):
-                        st.session_state.current_user = nom_c
-                        st.rerun()
-                    else:
-                        st.error("Nom d'utilisateur ou mot de passe incorrect.")
-                except Exception as exc:
-                    st.error(f"Erreur de connexion : {exc}")
-
-    with onglet_inscription:
-        nom_i = st.text_input("Choisissez un nom d'utilisateur", key="signup_nom")
-        mdp_i = st.text_input("Choisissez un mot de passe", type="password", key="signup_mdp")
-        if st.button("Créer mon compte", type="primary", key="btn_signup"):
-            if users_sheet is None:
-                st.error(users_error or "Connexion cloud indisponible.")
-            elif not nom_i or not mdp_i:
-                st.warning("Merci de renseigner un nom et un mot de passe.")
-            else:
-                try:
-                    enregistrements = users_sheet.get_all_records()
-                    if any(u.get("Nom") == nom_i for u in enregistrements):
-                        st.error("Ce nom d'utilisateur existe déjà. Essayez de vous connecter, ou choisissez un autre nom.")
-                    else:
-                        users_sheet.append_row([nom_i, hash_mdp(mdp_i)], value_input_option="USER_ENTERED")
-                        st.session_state.current_user = nom_i
-                        st.rerun()
-                except Exception as exc:
-                    st.error(f"Erreur lors de la création du compte : {exc}")
+                st.session_state.current_user = pseudo_nettoye
+                st.rerun()
     st.stop()
 
 DEFAULTS = {"brand_name": "SHM", "report_author": "", "project_name": "Projet routier", "pl_jour": 450, "tc": 3.5, "duree": 15,
@@ -439,8 +403,8 @@ for key, value in DEFAULTS.items():
 with st.sidebar:
     st.markdown("# 🛣️ SHM Road")
     st.caption("Prototype d’étude de chaussée")
-    st.success(f"👤 Connecté : {st.session_state.current_user}")
-    if st.button("🚪 Se déconnecter"):
+    st.success(f"Espace de : {st.session_state.current_user}")
+    if st.button("Changer de pseudo"):
         del st.session_state["current_user"]
         st.rerun()
     st.markdown("---")
@@ -454,7 +418,7 @@ with st.sidebar:
     st.markdown("---")
     st.caption("Version pédagogique — résultats à valider avant usage réel.")
 
-st.markdown('<div class="hero"><h1>Étude préliminaire et visualisation des chaussées</h1><div>Trafic · Portance du sol · Structure · Métré · Historique</div></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="hero"><div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;opacity:.82;margin-bottom:8px;">SHM ROAD · ESPACE DE TRAVAIL</div><h1>Bonjour {html.escape(str(st.session_state.current_user))}, votre étude de chaussée</h1><div>Trafic · Portance du sol · Structure · Coupe · Métré · Historique</div></div>', unsafe_allow_html=True)
 st.markdown('<div class="notice"><b>Important :</b> le catalogue d’épaisseurs inclus est illustratif, pas normatif. Ne pas utiliser ses résultats pour exécuter des travaux sans remplacement par un guide validé et vérification par un ingénieur compétent.</div>', unsafe_allow_html=True)
 
 # Calcul partagé
