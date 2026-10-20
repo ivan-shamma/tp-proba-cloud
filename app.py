@@ -10,6 +10,7 @@ from datetime import datetime
 import io
 import math
 import html
+import hashlib
 
 import numpy as np
 import pandas as pd
@@ -44,6 +45,11 @@ section[data-testid="stSidebar"] label {font-weight:600;}
 .stButton>button[kind="primary"], .stDownloadButton>button[kind="primary"] {color:white !important;}
 label, .stMarkdown, .stCaption, p, span {color:#243447;}
 input, textarea, .stSelectbox div, .stNumberInput input {color:#17365D !important;}
+.stTextInput input, .stNumberInput input {background:#FFFFFF !important; border:1px solid #B7C5D3 !important;}
+.stTextInput input::placeholder {color:#8CA0B3 !important;}
+.stTabs [data-baseweb="tab-list"] {gap:6px;}
+.stTabs [data-baseweb="tab"] {color:#17365D !important; font-weight:600; background:#EAF2FA; border-radius:8px 8px 0 0; padding:8px 16px;}
+.stTabs [aria-selected="true"] {background:#2F75B5 !important; color:#FFFFFF !important;}
 .small-muted {color:#64748B; font-size:.9rem;}
 </style>
 """, unsafe_allow_html=True)
@@ -292,6 +298,35 @@ def get_sheet():
         return None, f"Connexion cloud indisponible : {exc}"
 
 
+def get_users_sheet():
+    """Retourne l'onglet 'Utilisateurs' de la même feuille Google Sheets, le crée si absent."""
+    if gspread is None or Credentials is None:
+        return None, "Modules Google non installés."
+    try:
+        service_account = st.secrets.get("gcp_service_account", None)
+        nom_feuille = st.secrets.get("google_sheet_name", "Donnees_Chaussee")
+        if not service_account:
+            return None, "Cloud non configuré (secrets absents)."
+        creds = Credentials.from_service_account_info(
+            service_account,
+            scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"],
+        )
+        client = gspread.authorize(creds)
+        spreadsheet = client.open(nom_feuille)
+        try:
+            ws = spreadsheet.worksheet("Utilisateurs")
+        except gspread.WorksheetNotFound:
+            ws = spreadsheet.add_worksheet(title="Utilisateurs", rows=100, cols=2)
+            ws.append_row(["Nom", "MotDePasseHash"], value_input_option="USER_ENTERED")
+        return ws, None
+    except Exception as exc:
+        return None, f"Connexion cloud indisponible : {exc}"
+
+
+def hash_mdp(mdp: str) -> str:
+    return hashlib.sha256(mdp.encode("utf-8")).hexdigest()
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def meteo_actuelle(lat: float, lon: float):
     try:
@@ -325,6 +360,75 @@ if password_expected:
                 st.error("Mot de passe incorrect.")
         st.stop()
 
+# -----------------------------------------------------------------------------
+# Page d'accueil : connexion / inscription par utilisateur
+# -----------------------------------------------------------------------------
+if not st.session_state.get("current_user"):
+    st.markdown(
+        """
+        <div style="
+            background: linear-gradient(135deg, #2F75B5 0%, #17365D 100%);
+            border: 2px solid #17365D;
+            border-radius: 14px;
+            padding: 28px 32px;
+            margin-bottom: 22px;
+            box-shadow: 0 4px 14px rgba(23,54,93,0.25);
+        ">
+            <h1 style="color:#FFFFFF; margin:0 0 10px 0;">👋 Bienvenue sur SHM Road</h1>
+            <p style="color:#EAF2FA; font-size:16px; margin:0;">
+                <strong>SHM Road</strong> est une application pédagogique d'étude préliminaire de chaussées :
+                elle permet d'estimer un trafic cumulé, de caractériser un sol, de proposer une structure
+                de chaussée indicative, puis d'enregistrer et d'analyser statistiquement vos études dans le cloud.
+                Connectez-vous ou créez un compte pour commencer.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    users_sheet, users_error = get_users_sheet()
+    onglet_connexion, onglet_inscription = st.tabs(["🔑 Se connecter", "📝 Créer un compte"])
+
+    with onglet_connexion:
+        nom_c = st.text_input("Nom d'utilisateur", key="login_nom")
+        mdp_c = st.text_input("Mot de passe", type="password", key="login_mdp")
+        if st.button("Se connecter", type="primary", key="btn_login"):
+            if users_sheet is None:
+                st.error(users_error or "Connexion cloud indisponible.")
+            elif not nom_c or not mdp_c:
+                st.warning("Merci de renseigner un nom et un mot de passe.")
+            else:
+                try:
+                    enregistrements = users_sheet.get_all_records()
+                    correspondance = next((u for u in enregistrements if u.get("Nom") == nom_c), None)
+                    if correspondance and correspondance.get("MotDePasseHash") == hash_mdp(mdp_c):
+                        st.session_state.current_user = nom_c
+                        st.rerun()
+                    else:
+                        st.error("Nom d'utilisateur ou mot de passe incorrect.")
+                except Exception as exc:
+                    st.error(f"Erreur de connexion : {exc}")
+
+    with onglet_inscription:
+        nom_i = st.text_input("Choisissez un nom d'utilisateur", key="signup_nom")
+        mdp_i = st.text_input("Choisissez un mot de passe", type="password", key="signup_mdp")
+        if st.button("Créer mon compte", type="primary", key="btn_signup"):
+            if users_sheet is None:
+                st.error(users_error or "Connexion cloud indisponible.")
+            elif not nom_i or not mdp_i:
+                st.warning("Merci de renseigner un nom et un mot de passe.")
+            else:
+                try:
+                    enregistrements = users_sheet.get_all_records()
+                    if any(u.get("Nom") == nom_i for u in enregistrements):
+                        st.error("Ce nom d'utilisateur existe déjà. Essayez de vous connecter, ou choisissez un autre nom.")
+                    else:
+                        users_sheet.append_row([nom_i, hash_mdp(mdp_i)], value_input_option="USER_ENTERED")
+                        st.session_state.current_user = nom_i
+                        st.rerun()
+                except Exception as exc:
+                    st.error(f"Erreur lors de la création du compte : {exc}")
+    st.stop()
+
 DEFAULTS = {"brand_name": "SHM", "report_author": "", "project_name": "Projet routier", "pl_jour": 450, "tc": 3.5, "duree": 15,
             "part_voie": 50, "cbr": 8.0, "drainage": "Moyen", "latitude": 5.9631,
             "longitude": 10.1591, "largeur": 7.0, "longueur": 1000.0}
@@ -335,15 +439,18 @@ for key, value in DEFAULTS.items():
 with st.sidebar:
     st.markdown("# 🛣️ SHM Road")
     st.caption("Prototype d’étude de chaussée")
+    st.success(f"👤 Connecté : {st.session_state.current_user}")
+    if st.button("🚪 Se déconnecter"):
+        del st.session_state["current_user"]
+        st.rerun()
+    st.markdown("---")
     with st.expander("🎨 Identité des rapports", expanded=False):
         st.text_input("Nom / marque", key="brand_name", value=st.session_state.get("brand_name", "SHM"))
         st.text_input("Préparé par", key="report_author", value=st.session_state.get("report_author", ""))
         st.caption("Logo facultatif pour les documents PDF et Word")
         uploaded_logo = st.file_uploader("Importer un logo (PNG/JPG)", type=["png", "jpg", "jpeg"], key="brand_logo")
-    page = st.radio("Navigation", [
-        "🏠 Tableau de bord", "📊 Trafic & localisation", "🧱 Sol & dimensionnement",
-        "📐 Coupe & métré", "☁️ Historique & statistiques", "🔮 Scénarios de trafic"
-    ])
+    st.markdown("---")
+    st.caption("Toutes les sections sont regroupées ci-dessous : dépliez celle dont vous avez besoin.")
     st.markdown("---")
     st.caption("Version pédagogique — résultats à valider avant usage réel.")
 
@@ -365,9 +472,17 @@ for couche, options in MATERIALS.items():
     materiaux[couche] = st.session_state[key]
 
 # -----------------------------------------------------------------------------
-# PAGE : tableau de bord
+# Navigation par onglets, répartis sur toute la largeur de l'écran
 # -----------------------------------------------------------------------------
-if page.startswith("🏠"):
+onglet_bord, onglet_trafic, onglet_sol, onglet_coupe, onglet_histo, onglet_scenarios = st.tabs([
+    "🏠 Tableau de bord", "📊 Trafic & localisation", "🧱 Sol & dimensionnement",
+    "📐 Coupe & métré", "☁️ Historique & statistiques", "🔮 Scénarios de trafic",
+])
+
+# -----------------------------------------------------------------------------
+# SECTION : tableau de bord
+# -----------------------------------------------------------------------------
+with onglet_bord:
     st.subheader("Vue d’ensemble du projet")
     st.text_input("Nom du projet", key="project_name")
     a, b, c, d = st.columns(4)
@@ -375,7 +490,7 @@ if page.startswith("🏠"):
     b.metric("Classe de trafic (indicative)", classe_t)
     c.metric("CBR utilisé", f"{st.session_state.cbr:g} %")
     d.metric("Classe de sol (indicative)", classe_s)
-    st.plotly_chart(generer_coupe(e_ref, materiaux), use_container_width=True)
+    st.plotly_chart(generer_coupe(e_ref, materiaux), use_container_width=True, key="coupe_bord")
     st.subheader("Épaisseurs du catalogue illustratif")
     df = pd.DataFrame([{"Couche": k, "Matériau sélectionné": materiaux[k], "Épaisseur (cm)": v} for k, v in e_ref.items()])
     st.dataframe(df, use_container_width=True, hide_index=True)
@@ -383,9 +498,9 @@ if page.startswith("🏠"):
     st.info("Les classes S1–S5 et T0–T5 affichées sont des catégories de démonstration. Confirmez les seuils et le catalogue avec le référentiel retenu.")
 
 # -----------------------------------------------------------------------------
-# PAGE : trafic / localisation
+# SECTION : trafic / localisation
 # -----------------------------------------------------------------------------
-elif page.startswith("📊"):
+with onglet_trafic:
     st.subheader("Paramètres du trafic")
     left, right = st.columns(2)
     with left:
@@ -417,9 +532,9 @@ elif page.startswith("📊"):
             st.warning("Données météo indisponibles. Vérifiez la connexion Internet et les coordonnées.")
 
 # -----------------------------------------------------------------------------
-# PAGE : sol / dimensionnement
+# SECTION : sol / dimensionnement
 # -----------------------------------------------------------------------------
-elif page.startswith("🧱"):
+with onglet_sol:
     st.subheader("Caractérisation indicative de la plate-forme")
     st.number_input("Indice CBR (%)", min_value=0.1, max_value=100.0, step=0.5, key="cbr",
                      help="Indice portant de la plate-forme (California Bearing Ratio).")
@@ -445,9 +560,9 @@ elif page.startswith("🧱"):
     st.caption("Avant une utilisation technique, documenter le guide, l’édition, le domaine d’application et les hypothèses de chaque valeur.")
 
 # -----------------------------------------------------------------------------
-# PAGE : coupe / métré
+# SECTION : coupe / métré
 # -----------------------------------------------------------------------------
-elif page.startswith("📐"):
+with onglet_coupe:
     st.subheader("Matériaux et représentation de la structure")
     st.caption("Le choix du matériau ne modifie pas automatiquement l’épaisseur : aucun coefficient d’équivalence universel n’est appliqué.")
     cols = st.columns(3)
@@ -457,7 +572,7 @@ elif page.startswith("📐"):
             if e_ref[couche] == 0:
                 st.caption("Aucune épaisseur proposée par le catalogue illustratif pour cette couche.")
     materiaux = {c: st.session_state[f"mat_{c}"] for c in ["Roulement", "Base", "Fondation"]}
-    st.plotly_chart(generer_coupe(e_ref, materiaux), use_container_width=True)
+    st.plotly_chart(generer_coupe(e_ref, materiaux), use_container_width=True, key="coupe_dimensionnement")
     st.subheader("Récapitulatif")
     df_layers = pd.DataFrame([{"Couche": c, "Matériau": materiaux[c], "Épaisseur indicative (cm)": e_ref[c]} for c in e_ref])
     st.dataframe(df_layers, use_container_width=True, hide_index=True)
@@ -517,25 +632,29 @@ elif page.startswith("📐"):
             st.warning("Pour activer l’export Word, installe python-docx depuis requirements.txt.")
 
 # -----------------------------------------------------------------------------
-# PAGE : cloud / statistiques
+# SECTION : cloud / statistiques
 # -----------------------------------------------------------------------------
-elif page.startswith("☁️"):
+with onglet_histo:
     st.subheader("Historique des études")
     sheet, cloud_error = get_sheet()
     if cloud_error:
         st.info(cloud_error)
+    df_hist = pd.DataFrame()
     if sheet is None:
         st.markdown("Pour activer le cloud, installez les dépendances Google et configurez les secrets Streamlit (voir le guide fourni).")
-        st.stop()
-    try:
-        data = sheet.get_all_records()
-        df_hist = pd.DataFrame(data)
-    except Exception as exc:
-        st.error(f"Impossible de lire l’historique : {exc}")
-        st.stop()
-    if df_hist.empty:
-        st.info("Aucune étude enregistrée pour le moment. Vous pouvez enregistrer une étude depuis cette page lorsque les paramètres sont prêts.")
     else:
+        try:
+            data = sheet.get_all_records()
+            df_hist = pd.DataFrame(data)
+        except Exception as exc:
+            st.error(f"Impossible de lire l’historique : {exc}")
+    if sheet is not None and df_hist.empty:
+        st.info("Aucune étude enregistrée pour le moment. Vous pouvez enregistrer une étude depuis cette page lorsque les paramètres sont prêts.")
+    elif not df_hist.empty:
+        if "Utilisateur" in df_hist.columns:
+            voir_tout = st.checkbox("Afficher les études de tous les utilisateurs", value=False)
+            if not voir_tout:
+                df_hist = df_hist[df_hist["Utilisateur"] == st.session_state.current_user]
         st.dataframe(df_hist, use_container_width=True)
         numeric_candidates = [c for c in ["Trafic_cumule", "CBR", "Epaisseur_totale_cm"] if c in df_hist.columns]
         if numeric_candidates:
@@ -547,9 +666,9 @@ elif page.startswith("☁️"):
                 b.metric("Moyenne", f"{serie.mean():.2f}")
                 c.metric("Minimum", f"{serie.min():.2f}")
                 d.metric("Maximum", f"{serie.max():.2f}")
-                st.plotly_chart(px.histogram(x=serie, nbins=min(15, max(5, len(serie))), labels={"x": variable}, title=f"Distribution — {variable}"), use_container_width=True)
+                st.plotly_chart(px.histogram(x=serie, nbins=min(15, max(5, len(serie))), labels={"x": variable}, title=f"Distribution — {variable}"), use_container_width=True, key=f"hist_{variable}")
                 if len(serie) >= 2:
-                    st.plotly_chart(px.line(y=serie.reset_index(drop=True), labels={"x": "Observation", "y": variable}, markers=True, title=f"Valeurs enregistrées — {variable}"), use_container_width=True)
+                    st.plotly_chart(px.line(y=serie.reset_index(drop=True), labels={"x": "Observation", "y": variable}, markers=True, title=f"Valeurs enregistrées — {variable}"), use_container_width=True, key=f"line_{variable}")
         if {"Latitude", "Longitude"}.issubset(df_hist.columns):
             coords = df_hist[["Latitude", "Longitude"]].apply(pd.to_numeric, errors="coerce").dropna()
             if not coords.empty:
@@ -562,6 +681,7 @@ elif page.startswith("☁️"):
         try:
             row = {
                 "Horodatage": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "Utilisateur": st.session_state.current_user,
                 "Projet": st.session_state.project_name,
                 "PL_jour": st.session_state.pl_jour,
                 "Taux_croissance_pct": st.session_state.tc,
@@ -586,9 +706,9 @@ elif page.startswith("☁️"):
             st.error(f"Échec de l’enregistrement : {exc}")
 
 # -----------------------------------------------------------------------------
-# PAGE : scénarios de trafic
+# SECTION : scénarios de trafic
 # -----------------------------------------------------------------------------
-elif page.startswith("🔮"):
+with onglet_scenarios:
     st.subheader("Projection indicative du trafic cumulé")
     c1, c2 = st.columns(2)
     with c1:
@@ -604,7 +724,7 @@ elif page.startswith("🔮"):
     for seuil, classe in [(5e5, "T4"), (2e6, "T3"), (7e6, "T2"), (2e7, "T1"), (5e7, "T0")]:
         fig.add_hline(y=seuil, line_dash="dot", annotation_text=f"Seuil {classe}", annotation_position="top left")
     fig.update_layout(title="Scénarios de trafic cumulé", xaxis_title="Années depuis le début de la projection", yaxis_title="PL cumulés estimés", hovermode="x unified")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="scenario_trafic")
     st.caption("Les scénarios sont des hypothèses, pas des prévisions garanties. Les seuils de classes doivent être confirmés selon le référentiel adopté.")
 
 st.markdown("---")
